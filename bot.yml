@@ -1,0 +1,50 @@
+name: Bot PJe TJMA
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: bot-pje-tjma
+  cancel-in-progress: false
+
+jobs:
+  rodar-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Criar arquivo de credenciais do Firebase
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > firebase-service-account.json
+
+      - name: Criar arquivo .env
+        run: |
+          echo "PJE_USUARIO=${{ secrets.PJE_USUARIO }}" >> .env
+          echo "PJE_SENHA_TJMA=${{ secrets.PJE_SENHA_TJMA }}" >> .env
+          echo "PJE_TOTP_SECRET=${{ secrets.PJE_TOTP_SECRET }}" >> .env
+
+      - name: Rodar bot (com Xvfb)
+        run: xvfb-run -a python bot_pje_ma.py &
+        shell: bash
+
+      - name: Manter o job vivo até o tempo limite
+        run: |
+          # O bot roda em loop infinito; deixamos o job ativo pelo tempo
+          # do timeout do job e o GitHub Actions encerra o processo ao
+          # final do step/timeout.
+          sleep 20000

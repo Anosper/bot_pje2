@@ -1,0 +1,6 @@
+.env
+firebase-service-account*.json
+sessao_pje_ma.json
+debug_*/
+__pycache__/
+*.pyc
