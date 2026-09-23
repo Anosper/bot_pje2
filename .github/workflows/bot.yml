@@ -21,8 +21,8 @@ jobs:
       - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          playwright install chromium
+          python -m pip install -r requirements.txt
+          python -m playwright install chromium
         shell: powershell
 
       - name: Criar arquivo de credenciais do Firebase
