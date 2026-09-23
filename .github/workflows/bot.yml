@@ -25,14 +25,18 @@ jobs:
           python -m playwright install chromium
         shell: powershell
 
-      - name: Criar arquivos de credenciais do Firebase (principal + secundário)
+      - name: Criar arquivos de credenciais do Firebase (principal + failovers)
         run: |
-          Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline -Encoding ascii
-          Set-Content -Path firebase-service-account-2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_SECUNDARIO -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT_JSON -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account-failover.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account-failover2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account-failover3.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON -NoNewline -Encoding ascii
         shell: powershell
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          FIREBASE_SERVICE_ACCOUNT_SECUNDARIO: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SECUNDARIO }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON }}
+          FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON }}
+          FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON }}
 
       - name: Criar arquivo .env
         run: |
