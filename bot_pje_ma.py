@@ -53,10 +53,13 @@ class SessaoNavegador:
     def _abrir(self):
         self.navegador = self.p.chromium.launch(
             headless=self.headless,
-            # --disable-http2: alguns tribunais (ex: TRF3) retornam
-            # ERR_HTTP2_PROTOCOL_ERROR de forma consistente com HTTP/2
-            # no Chromium. Forçar HTTP/1.1 evita esse erro.
-            args=["--disable-http2"],
+            # OBS: já usamos --disable-http2 aqui por causa de um erro
+            # antigo (ERR_HTTP2_PROTOCOL_ERROR) no domínio do PJe do
+            # TRF3. Removido: essa flag parece ter passado a travar a
+            # conexão com www.trf3.jus.br (domínio diferente, do
+            # portal), que só funciona no navegador normal. Se o
+            # ERR_HTTP2_PROTOCOL_ERROR voltar a aparecer especificamente
+            # em pje1g.trf3.jus.br, reavaliar.
         )
         if os.path.exists(self.arquivo_sessao):
             self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao)
@@ -142,7 +145,7 @@ URL_LOGIN_DIRETA_TRF3 = (
     "?response_type=code"
     "&client_id=pje-trf3-1g"
     "&redirect_uri=https%3A%2F%2Fpje1g.trf3.jus.br%2Fpje%2Flogin.seam"
-    "&state=8e583682-6a1e-4367-8d70-ef33e9eb59e9"
+    "&state=35c4d516-2895-4996-a936-c4387c2c4fbb"
     "&login=true"
     "&scope=openid"
 )
@@ -634,6 +637,30 @@ def tentar_passar_tela_ja_logado(sessao, tribunal):
 
 
 def fazer_login_trf3_portal_click(sessao, tribunal):
+    """Fluxo especial do TRF3. Tenta primeiro a URL direta de SSO
+    (mais simples, sem depender do portal carregar) e só cai pro
+    fluxo de portal+clique (que contorna o WAF que bloqueia goto
+    direto pro domínio do PJe) se a direta falhar."""
+
+    print(f"[{tribunal['nome']}] Tentando URL direta de SSO primeiro: {URL_LOGIN_DIRETA_TRF3}")
+    if navegar_com_retry(sessao.pagina, URL_LOGIN_DIRETA_TRF3, tentativas=2, timeout=30000):
+        sessao.pagina.wait_for_timeout(1000)
+        texto_pagina = ""
+        try:
+            texto_pagina = sessao.pagina.locator("body").inner_text(timeout=3000).lower()
+        except Exception:
+            pass
+        if "cookie not found" not in texto_pagina and "erro" not in sessao.pagina.url.lower():
+            print(f"[{tribunal['nome']}] URL direta de SSO funcionou.")
+            return _continuar_login_trf3_apos_abrir_tela(sessao, tribunal)
+        print(f"[{tribunal['nome']}] URL direta de SSO abriu mas parece inválida/expirada — caindo pro portal.")
+    else:
+        print(f"[{tribunal['nome']}] URL direta de SSO não abriu — caindo pro portal.")
+
+    return _fazer_login_trf3_via_portal(sessao, tribunal)
+
+
+def _fazer_login_trf3_via_portal(sessao, tribunal):
     """Fluxo especial do TRF3: o servidor bloqueia navegação direta
     (page.goto) pro domínio do PJe — só libera com um clique de
     verdade dentro do navegador. Por isso passamos pelo portal
@@ -725,6 +752,13 @@ def fazer_login_trf3_portal_click(sessao, tribunal):
             except Exception:
                 pass
 
+    return _continuar_login_trf3_apos_abrir_tela(sessao, tribunal)
+
+
+def _continuar_login_trf3_apos_abrir_tela(sessao, tribunal):
+    """Parte comum aos dois caminhos de entrada do TRF3 (URL direta
+    de SSO ou portal+clique): a partir daqui já estamos numa página
+    que deve ser a tela de login/SSO (ou já logada)."""
     try:
         sessao.pagina.wait_for_load_state("domcontentloaded", timeout=30000)
     except Exception:
