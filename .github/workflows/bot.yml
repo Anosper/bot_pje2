@@ -29,6 +29,16 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
+      - name: Diagnóstico de rede — pje.tjma.jus.br
+        run: |
+          echo "--- DNS ---"
+          getent hosts pje.tjma.jus.br || true
+          echo "--- Ping (3x) ---"
+          ping -c 3 pje.tjma.jus.br || true
+          echo "--- curl -v (10s timeout) ---"
+          curl -v --max-time 10 https://pje.tjma.jus.br/pje/login.seam || true
+        continue-on-error: true
+
       - name: Criar arquivo de credenciais do Firebase
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > firebase-service-account.json
 
