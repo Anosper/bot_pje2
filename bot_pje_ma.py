@@ -53,13 +53,14 @@ class SessaoNavegador:
     def _abrir(self):
         self.navegador = self.p.chromium.launch(
             headless=self.headless,
-            # --disable-http2: pje1g.trf3.jus.br retorna
-            # ERR_HTTP2_PROTOCOL_ERROR de forma consistente em
-            # navegações diretas (goto) sem essa flag — confirmado de
-            # novo em teste. Mantendo ligada; se o portal
-            # (www.trf3.jus.br) voltar a travar por causa dela, temos
-            # que isolar essa etapa num navegador/contexto separado.
-            args=["--disable-http2"],
+            # OBS: sem --disable-http2 de propósito. www.trf3.jus.br
+            # (portal) trava com essa flag ligada; pje1g.trf3.jus.br
+            # dá ERR_HTTP2_PROTOCOL_ERROR em goto() direto mesmo SEM
+            # a flag — mas parece que isso só acontece em goto()
+            # explícito, não em navegações por clique real (que é
+            # como login e abertura de consulta do TRF3 funcionam
+            # agora). Ver fazer_login_trf3_portal_click e
+            # abrir_tela_de_consulta.
         )
         if os.path.exists(self.arquivo_sessao):
             self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao)
@@ -1385,6 +1386,44 @@ def processar_combinacao(pagina, tribunal, classe):
 # ============================================================
 # FUNÇÃO — ABRIR TELA DE CONSULTA (com fallback de URL)
 # ============================================================
+def _tentar_clicar_para_consulta_trf3(sessao, tribunal):
+    """TRF3: goto() direto pra ConsultaProcesso dá
+    ERR_HTTP2_PROTOCOL_ERROR — procura um link de verdade na página
+    logada (menu) e clica nele, do mesmo jeito que funcionou pro
+    login. Retorna True se achou e clicou em algo."""
+    try:
+        candidatos = sessao.pagina.locator(
+            "a[href*='ConsultaProcesso'], a:has-text('Consulta Processual'), "
+            "a:has-text('Consulta processual')"
+        )
+        total = candidatos.count()
+    except Exception:
+        total = 0
+
+    for i in range(total):
+        link = candidatos.nth(i)
+        try:
+            if not link.is_visible():
+                continue
+            try:
+                link.evaluate("el => el.removeAttribute('target')")
+            except Exception:
+                pass
+            url_antes = sessao.pagina.url
+            try:
+                link.click()
+                sessao.pagina.wait_for_url(lambda url: url != url_antes, timeout=15000)
+                print(f"[{tribunal['nome']}] Cliquei num link pra abrir a consulta (mesma aba).")
+                return True
+            except Exception:
+                _clicar_com_captura_de_aba(sessao, tribunal, link)
+                print(f"[{tribunal['nome']}] Cliquei num link pra abrir a consulta (com captura de aba).")
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def abrir_tela_de_consulta(sessao, tribunal):
     # Alguns tribunais (TJES, TJRN, TJPI, TJRO) demoram mais para
     # carregar essa tela — timeout generoso para não desistir cedo
@@ -1403,6 +1442,19 @@ def abrir_tela_de_consulta(sessao, tribunal):
         except Exception as erro:
             print(f"Tela de consulta em {url} não ficou pronta a tempo:", erro)
             return False
+
+    if tribunal.get("login_portal_click"):
+        # TRF3: tenta por clique real primeiro (evita o
+        # ERR_HTTP2_PROTOCOL_ERROR do goto direto).
+        if _tentar_clicar_para_consulta_trf3(sessao, tribunal):
+            try:
+                verificar_e_aguardar_cloudflare(sessao)
+                sessao.pagina.locator("#fPP\\:searchProcessos").wait_for(
+                    state="visible", timeout=TIMEOUT_BOTAO_PESQUISA
+                )
+                return True
+            except Exception as erro:
+                print(f"[{tribunal['nome']}] Tela de consulta (via clique) não ficou pronta a tempo:", erro)
 
     if tentar(tribunal["url_pesquisa"]):
         return True
