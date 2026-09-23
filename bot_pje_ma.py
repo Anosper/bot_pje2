@@ -125,7 +125,9 @@ CLASSES_JUDICIAIS = [
 # VALOR MÍNIMO DA CAUSA POR TRIBUNAL
 # ============================================================
 VALOR_MINIMO_CAUSA_POR_TRIBUNAL = {
-    "TJMA": "10000",
+    # O campo tem máscara monetária: os 2 últimos dígitos digitados
+    # viram centavos. "1000000" -> exibido como R$ 10.000,00.
+    "TJMA": "1000000",
 }
 
 # ============================================================
@@ -434,21 +436,12 @@ def fazer_login(sessao, tribunal):
         print("Sessão SSO já ativa — login automático (sem certificado nem senha).")
         return True
 
-    logou_com_certificado, precisa_recarregar_pagina = tentar_login_certificado(sessao, tribunal)
+    # TJMA: login sempre por usuário/senha + 2FA — não oferecemos a
+    # etapa de certificado digital (que abriria uma janela visível
+    # pedindo clique manual, incompatível com rodar como serviço).
+    logou_com_certificado = False
 
     if not logou_com_certificado:
-        if precisa_recarregar_pagina:
-            try:
-                sessao.pagina.goto(
-                    tribunal["url_login"],
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                )
-                sessao.pagina.wait_for_timeout(1500)
-                verificar_e_aguardar_cloudflare(sessao)
-            except Exception:
-                pass
-
         senha = os.getenv(tribunal["senha_env"])
         if not senha:
             print(f"ERRO: variável {tribunal['senha_env']} não definida no .env")
