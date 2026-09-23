@@ -39,8 +39,10 @@ jobs:
           echo "PJE_TOTP_SECRET=${{ secrets.PJE_TOTP_SECRET }}" >> .env
 
       - name: Rodar bot (com Xvfb)
-        run: xvfb-run -a python bot_pje_ma.py
+        run: xvfb-run -a python -u bot_pje_ma.py
         shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
         # O bot roda em loop infinito (varredura a cada 30s). Ele fica
         # em primeiro plano aqui até o timeout-minutes do job (acima)
         # derrubar o runner — é esperado o step terminar por timeout,
