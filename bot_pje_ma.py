@@ -53,13 +53,13 @@ class SessaoNavegador:
     def _abrir(self):
         self.navegador = self.p.chromium.launch(
             headless=self.headless,
-            # OBS: já usamos --disable-http2 aqui por causa de um erro
-            # antigo (ERR_HTTP2_PROTOCOL_ERROR) no domínio do PJe do
-            # TRF3. Removido: essa flag parece ter passado a travar a
-            # conexão com www.trf3.jus.br (domínio diferente, do
-            # portal), que só funciona no navegador normal. Se o
-            # ERR_HTTP2_PROTOCOL_ERROR voltar a aparecer especificamente
-            # em pje1g.trf3.jus.br, reavaliar.
+            # --disable-http2: pje1g.trf3.jus.br retorna
+            # ERR_HTTP2_PROTOCOL_ERROR de forma consistente em
+            # navegações diretas (goto) sem essa flag — confirmado de
+            # novo em teste. Mantendo ligada; se o portal
+            # (www.trf3.jus.br) voltar a travar por causa dela, temos
+            # que isolar essa etapa num navegador/contexto separado.
+            args=["--disable-http2"],
         )
         if os.path.exists(self.arquivo_sessao):
             self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao)
