@@ -42,13 +42,13 @@ jobs:
         run: |
           "PJE_USUARIO=$env:PJE_USUARIO" | Out-File -FilePath .env -Encoding ascii
           "PJE_SENHA_TJMA=$env:PJE_SENHA_TJMA" | Add-Content -Path .env
-          "PJE_SENHA_TRF3=$env:PJE_SENHA_TRF3" | Add-Content -Path .env
+          "PJE_SENHA_TJPI=$env:PJE_SENHA_TJPI" | Add-Content -Path .env
           "PJE_TOTP_SECRET=$env:PJE_TOTP_SECRET" | Add-Content -Path .env
         shell: powershell
         env:
           PJE_USUARIO: ${{ secrets.PJE_USUARIO }}
           PJE_SENHA_TJMA: ${{ secrets.PJE_SENHA_TJMA }}
-          PJE_SENHA_TRF3: ${{ secrets.PJE_SENHA_TRF3 }}
+          PJE_SENHA_TJPI: ${{ secrets.PJE_SENHA_TJPI }}
           PJE_TOTP_SECRET: ${{ secrets.PJE_TOTP_SECRET }}
 
       - name: Rodar bot
