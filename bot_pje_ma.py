@@ -160,7 +160,9 @@ print("==========================================")
 try:
     fm = FirebaseManager([
         {"name": "principal", "cred_path": "firebase-service-account.json"},
-        {"name": "secundario", "cred_path": "firebase-service-account-2.json"},
+        {"name": "failover", "cred_path": "firebase-service-account-failover.json"},
+        {"name": "failover2", "cred_path": "firebase-service-account-failover2.json"},
+        {"name": "failover3", "cred_path": "firebase-service-account-failover3.json"},
     ])
     print(f"Firebase conectado com sucesso! Projeto ativo: {fm.active_project}")
 except Exception as erro:
