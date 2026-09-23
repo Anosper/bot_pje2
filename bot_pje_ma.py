@@ -9,6 +9,8 @@ from playwright.sync_api import sync_playwright
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
+from google.api_core.exceptions import ResourceExhausted
+from firebase_manager import FirebaseManager
 
 # ============================================================
 # SUPORTE A "PULAR ESPERA" APERTANDO ENTER NO TERMINAL
@@ -156,10 +158,11 @@ print("==========================================")
 print(" CONECTANDO AO FIREBASE")
 print("==========================================")
 try:
-    credencial = credentials.Certificate("firebase-service-account.json")
-    firebase_admin.initialize_app(credencial)
-    db = firestore.client()
-    print("Firebase conectado com sucesso!")
+    fm = FirebaseManager([
+        {"name": "principal", "cred_path": "firebase-service-account.json"},
+        {"name": "secundario", "cred_path": "firebase-service-account-2.json"},
+    ])
+    print(f"Firebase conectado com sucesso! Projeto ativo: {fm.active_project}")
 except Exception as erro:
     print()
     print("==========================================")
@@ -485,16 +488,24 @@ def fazer_login(sessao, tribunal):
 def processo_existe_no_firebase(numero):
     if not numero:
         return False
-    try:
-        documento = db.collection("processos").document(numero).get()
-        if documento.exists:
-            print(f"[JÁ EXISTE] {numero}")
+    for tentativa in range(2):
+        try:
+            ref = fm.client().collection("processos").document(numero)
+            documento = fm.get(ref)
+            if documento.exists:
+                print(f"[JÁ EXISTE] {numero}")
+                return True
+            print(f"[NOVO] {numero}")
+            return False
+        except ResourceExhausted:
+            # fm.get já marcou o projeto atual como esgotado e trocou
+            # o ativo — tenta de novo (uma vez) com o próximo projeto.
+            continue
+        except Exception as erro:
+            print("ERRO AO CONSULTAR FIREBASE:", type(erro).__name__, erro)
             return True
-        print(f"[NOVO] {numero}")
-        return False
-    except Exception as erro:
-        print("ERRO AO CONSULTAR FIREBASE:", type(erro).__name__, erro)
-        return True
+    print("ERRO AO CONSULTAR FIREBASE: cota esgotada em todos os projetos configurados.")
+    return True
 # ============================================================
 # FUNÇÃO — SALVAR PROCESSO NO FIREBASE
 # ============================================================
@@ -521,27 +532,36 @@ def salvar_processo_no_firebase(dados, tribunal_origem):
     # sempre no mesmo formato.
     dados["data_distribuicao"] = dados["dataCaptacao"]
 
-    try:
-        db.collection("processos").document(numero).set(dados)
-        print()
-        print("==========================================")
-        print(" PROCESSO SALVO NO FIREBASE")
-        print("==========================================")
-        print("Número:", dados.get("numero"))
-        print("Réu:", dados.get("reu"))
-        print("CPF/CNPJ:", dados.get("documento_reu"))
-        print("Classe:", dados.get("classe"))
-        print("Tribunal (extraído do número):", dados.get("tribunal"))
-        print("Tribunal (consulta):", tribunal_origem)
-        print("Autor:", dados.get("autor"))
-        print("Valor:", dados.get("valor_causa"))
-        print("Autuação (= data de captação):", dados.get("data_distribuicao"))
-        print("Data de captação:", dados.get("dataCaptacao"))
-        return True
-    except Exception as erro:
-        print()
-        print("ERRO AO SALVAR NO FIREBASE:", type(erro).__name__, erro)
-        return False
+    for tentativa in range(2):
+        try:
+            ref = fm.client().collection("processos").document(numero)
+            fm.set(ref, dados)
+            print()
+            print("==========================================")
+            print(" PROCESSO SALVO NO FIREBASE")
+            print("==========================================")
+            print("Número:", dados.get("numero"))
+            print("Réu:", dados.get("reu"))
+            print("CPF/CNPJ:", dados.get("documento_reu"))
+            print("Classe:", dados.get("classe"))
+            print("Tribunal (extraído do número):", dados.get("tribunal"))
+            print("Tribunal (consulta):", tribunal_origem)
+            print("Autor:", dados.get("autor"))
+            print("Valor:", dados.get("valor_causa"))
+            print("Autuação (= data de captação):", dados.get("data_distribuicao"))
+            print("Data de captação:", dados.get("dataCaptacao"))
+            return True
+        except ResourceExhausted:
+            # fm.set já marcou o projeto atual como esgotado e trocou
+            # o ativo — tenta de novo (uma vez) com o próximo projeto.
+            continue
+        except Exception as erro:
+            print()
+            print("ERRO AO SALVAR NO FIREBASE:", type(erro).__name__, erro)
+            return False
+    print()
+    print("ERRO AO SALVAR NO FIREBASE: cota esgotada em todos os projetos configurados.")
+    return False
 # ============================================================
 # PADRÃO — TAG DE PAPEL DA PARTE (reconhece parênteses aninhados)
 # ============================================================
