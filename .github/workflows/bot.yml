@@ -23,20 +23,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
-        shell: pwsh
+        shell: powershell
 
       - name: Criar arquivo de credenciais do Firebase
-        run: Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline
-        shell: pwsh
+        run: Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline -Encoding ascii
+        shell: powershell
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Criar arquivo .env
         run: |
-          "PJE_USUARIO=$env:PJE_USUARIO" | Out-File -FilePath .env -Encoding utf8NoBOM
+          "PJE_USUARIO=$env:PJE_USUARIO" | Out-File -FilePath .env -Encoding ascii
           "PJE_SENHA_TJMA=$env:PJE_SENHA_TJMA" | Add-Content -Path .env
           "PJE_TOTP_SECRET=$env:PJE_TOTP_SECRET" | Add-Content -Path .env
-        shell: pwsh
+        shell: powershell
         env:
           PJE_USUARIO: ${{ secrets.PJE_USUARIO }}
           PJE_SENHA_TJMA: ${{ secrets.PJE_SENHA_TJMA }}
@@ -44,7 +44,7 @@ jobs:
 
       - name: Rodar bot
         run: python -u bot_pje_ma.py
-        shell: pwsh
+        shell: powershell
         env:
           PYTHONUNBUFFERED: "1"
         # O bot roda em loop infinito (varredura a cada 30s). Ele fica
