@@ -667,32 +667,46 @@ def fazer_login_trf3_portal_click(sessao, tribunal):
             alvo_clique.first.scroll_into_view_if_needed(timeout=5000)
         except Exception:
             pass
+
+        # Tira o target="_blank" do link antes de clicar, pra forçar a
+        # navegação a acontecer na MESMA aba — ainda é um clique de
+        # verdade (então o WAF do TRF3 deve aceitar), só que sem o
+        # risco da aba nova ficar presa em about:blank.
         try:
-            with sessao.contexto.expect_page(timeout=15000) as info_pagina_nova:
-                alvo_clique.first.click()
-            pagina_nova = info_pagina_nova.value
+            alvo_clique.first.evaluate("el => el.removeAttribute('target')")
+        except Exception:
+            pass
+
+        try:
+            alvo_clique.first.click()
+            sessao.pagina.wait_for_url(lambda url: url != url_antes_do_clique, timeout=20000)
+            clicou_automatico = True
+            print(f"[{tribunal['nome']}] Clique no portal funcionou — navegou na mesma aba. URL:", sessao.pagina.url)
+        except Exception:
+            print(f"[{tribunal['nome']}] Clique na mesma aba não navegou — tentando capturar aba nova (fallback)...")
+
+        if not clicou_automatico:
             try:
-                pagina_nova.wait_for_url(lambda url: url not in ("about:blank", ""), timeout=15000)
-            except Exception:
-                pass
-            if pagina_nova.url in ("about:blank", ""):
-                print(f"[{tribunal['nome']}] Aba nova abriu mas ficou em about:blank — não vou usar ela.")
+                with sessao.contexto.expect_page(timeout=8000) as info_pagina_nova:
+                    alvo_clique.first.click()
+                pagina_nova = info_pagina_nova.value
                 try:
-                    pagina_nova.close()
+                    pagina_nova.wait_for_url(lambda url: url not in ("about:blank", ""), timeout=15000)
                 except Exception:
                     pass
-            else:
-                pagina_nova.on("dialog", tratar_dialogo)
-                sessao.pagina = pagina_nova
-                clicou_automatico = True
-                print(f"[{tribunal['nome']}] Clique no portal funcionou — abriu em aba nova. URL:", pagina_nova.url)
-        except Exception:
-            try:
-                sessao.pagina.wait_for_url(lambda url: url != url_antes_do_clique, timeout=15000)
+                if pagina_nova.url in ("about:blank", ""):
+                    print(f"[{tribunal['nome']}] Aba nova abriu mas ficou em about:blank — não vou usar ela.")
+                    try:
+                        pagina_nova.close()
+                    except Exception:
+                        pass
+                else:
+                    pagina_nova.on("dialog", tratar_dialogo)
+                    sessao.pagina = pagina_nova
+                    clicou_automatico = True
+                    print(f"[{tribunal['nome']}] Clique no portal funcionou — abriu em aba nova. URL:", pagina_nova.url)
             except Exception:
                 pass
-            if sessao.pagina.url != url_antes_do_clique:
-                clicou_automatico = True
 
     if not clicou_automatico:
         print(f"[{tribunal['nome']}] Clique automático não funcionou — abrindo diretamente: {URL_LOGIN_DIRETA_TRF3}")
@@ -1399,7 +1413,8 @@ with sync_playwright() as p:
     print(" BOT PJE TJMA + TRF3 INICIADO")
     print("==========================================")
     print("Tribunais:", ", ".join(t["nome"] for t in TRIBUNAIS))
-    print("Classes (padrão):", ", ".join(CLASSES_JUDICIAIS))
+    for _t in TRIBUNAIS:
+        print(f"  Classes ({_t['nome']}):", ", ".join(_t.get("classes", CLASSES_JUDICIAIS)))
 
     while True:
         print()
