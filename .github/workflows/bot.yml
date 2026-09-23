@@ -11,49 +11,44 @@ concurrency:
 
 jobs:
   rodar-bot:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows]
     timeout-minutes: 350
 
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install --with-deps chromium
-
-      - name: Diagnóstico de rede — pje.tjma.jus.br
-        run: |
-          echo "--- DNS ---"
-          getent hosts pje.tjma.jus.br || true
-          echo "--- Ping (3x) ---"
-          ping -c 3 pje.tjma.jus.br || true
-          echo "--- curl -v (10s timeout) ---"
-          curl -v --max-time 10 https://pje.tjma.jus.br/pje/login.seam || true
-        continue-on-error: true
+          playwright install chromium
+        shell: pwsh
 
       - name: Criar arquivo de credenciais do Firebase
-        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > firebase-service-account.json
+        run: Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline
+        shell: pwsh
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Criar arquivo .env
         run: |
-          echo "PJE_USUARIO=${{ secrets.PJE_USUARIO }}" >> .env
-          echo "PJE_SENHA_TJMA=${{ secrets.PJE_SENHA_TJMA }}" >> .env
-          echo "PJE_TOTP_SECRET=${{ secrets.PJE_TOTP_SECRET }}" >> .env
+          "PJE_USUARIO=$env:PJE_USUARIO" | Out-File -FilePath .env -Encoding utf8NoBOM
+          "PJE_SENHA_TJMA=$env:PJE_SENHA_TJMA" | Add-Content -Path .env
+          "PJE_TOTP_SECRET=$env:PJE_TOTP_SECRET" | Add-Content -Path .env
+        shell: pwsh
+        env:
+          PJE_USUARIO: ${{ secrets.PJE_USUARIO }}
+          PJE_SENHA_TJMA: ${{ secrets.PJE_SENHA_TJMA }}
+          PJE_TOTP_SECRET: ${{ secrets.PJE_TOTP_SECRET }}
 
-      - name: Rodar bot (com Xvfb)
-        run: xvfb-run -a python -u bot_pje_ma.py
-        shell: bash
+      - name: Rodar bot
+        run: python -u bot_pje_ma.py
+        shell: pwsh
         env:
           PYTHONUNBUFFERED: "1"
         # O bot roda em loop infinito (varredura a cada 30s). Ele fica
         # em primeiro plano aqui até o timeout-minutes do job (acima)
         # derrubar o runner — é esperado o step terminar por timeout,
         # não por erro. O cron dispara uma nova execução em seguida.
+        # HEADLESS já é True no script, então não precisa de tela virtual.
