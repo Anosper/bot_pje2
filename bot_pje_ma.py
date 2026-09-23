@@ -189,8 +189,31 @@ REGRA_SELECAO_PROCESSO = {
 # },
 TRIBUNAIS = [
     {
-        # TJPI primeiro na lista de propósito — assim dá pra ver se
-        # ele está indo bem sem esperar o TJMA rodar primeiro.
+        # TJRN primeiro na lista de propósito — assim dá pra ver se
+        # ele está indo bem sem esperar os outros rodarem primeiro.
+        "nome": "TJRN",
+        "url_login": "https://pje1g.tjrn.jus.br/pje/login.seam",
+        "url_pesquisa": "https://pje1g.tjrn.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
+        "senha_env": "PJE_SENHA_TJRN",
+        "login_portal_click": True,
+        "url_portal": "https://www.tjrn.jus.br/",
+        # Portal do TJRN esconde o link de acesso atrás de uma aba
+        # ("Consulta Processual - PJe") que precisa ser clicada
+        # primeiro pra revelar o link "Acessar sistema".
+        "texto_clique_preliminar": re.compile(r"Consulta\s+Processual\s*-\s*PJe", re.IGNORECASE),
+        "url_destino_clique": "https://pje1g.tjrn.jus.br/pje",
+        "texto_link_portal": re.compile(r"Acessar\s+sistema", re.IGNORECASE),
+        "url_login_direta_fallback": (
+            "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
+            "?response_type=code"
+            "&client_id=pje-tjrn-1g"
+            "&redirect_uri=https%3A%2F%2Fpje1g.tjrn.jus.br%2Fpje%2Flogin.seam"
+            "&state=20a77679-4dd3-4cc6-8de0-9bc12c29ee59"
+            "&login=true"
+            "&scope=openid"
+        ),
+    },
+    {
         "nome": "TJPI",
         "url_login": "https://pje.tjpi.jus.br/1g/login.seam",
         "url_pesquisa": "https://pje.tjpi.jus.br/1g/Processo/ConsultaProcesso/listView.seam",
@@ -681,6 +704,7 @@ def _fazer_login_via_portal(sessao, tribunal):
     url_destino_clique = tribunal["url_destino_clique"]
     texto_link_portal = tribunal["texto_link_portal"]
     url_login_direta_fallback = tribunal.get("url_login_direta_fallback")
+    texto_clique_preliminar = tribunal.get("texto_clique_preliminar")
 
     if not navegar_com_retry(sessao.pagina, url_portal, tentativas=5, timeout=120000):
         print(f"[{tribunal['nome']}] Não foi possível abrir o portal — pulando este tribunal.")
@@ -692,6 +716,20 @@ def _fazer_login_via_portal(sessao, tribunal):
     except Exception:
         pass
     verificar_e_aguardar_cloudflare(sessao)
+
+    # Alguns portais (ex.: TJRN) escondem o link de acesso atrás de
+    # uma aba/botão que precisa ser clicado primeiro pra revelar o
+    # link — tribunal['texto_clique_preliminar'] é o texto/regex
+    # desse botão preliminar, se houver.
+    if texto_clique_preliminar:
+        try:
+            alvo_preliminar = sessao.pagina.get_by_text(texto_clique_preliminar)
+            if alvo_preliminar.count() > 0:
+                alvo_preliminar.first.click()
+                print(f"[{tribunal['nome']}] Clique preliminar no portal feito — aguardando link de acesso aparecer...")
+                sessao.pagina.wait_for_timeout(1500)
+        except Exception as erro:
+            print(f"[{tribunal['nome']}] Aviso: clique preliminar no portal falhou: {erro}")
 
     clicou_automatico = False
     seletor_href = f"a[href='{url_destino_clique}']"
@@ -1512,7 +1550,7 @@ with sync_playwright() as p:
 
     print()
     print("==========================================")
-    print(" BOT PJE TJPI + TJMA INICIADO")
+    print(" BOT PJE TJRN + TJPI + TJMA INICIADO")
     print("==========================================")
     print("Tribunais:", ", ".join(t["nome"] for t in TRIBUNAIS))
     for _t in TRIBUNAIS:
