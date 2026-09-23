@@ -2,3 +2,4 @@ playwright
 python-dotenv
 pyotp
 firebase-admin
+filelock
