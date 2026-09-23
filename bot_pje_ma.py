@@ -638,9 +638,20 @@ def tentar_passar_tela_ja_logado(sessao, tribunal):
 
 
 def fazer_login_trf3_portal_click(sessao, tribunal):
-    """Fluxo especial do TRF3: portal+clique é o caminho principal
-    (é o único sustentável pra rodar sozinho sem depender de um link
-    de SSO novo a cada execução — aquele link é de uso único)."""
+    """TRF3: tenta primeiro o caminho simples (goto direto pra
+    url_login, igual aos outros tribunais) — o bloqueio de WAF que
+    exigia clique de verdade foi confirmado em outro ambiente/IP, e
+    pode não se aplicar rodando desse PC. Só cai pro portal+clique
+    (o único caminho sustentável pra rodar sozinho, sem depender de
+    link de uso único) se o simples falhar."""
+    print(f"[{tribunal['nome']}] Tentando caminho simples primeiro (goto direto pra url_login)...")
+    if navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=2, timeout=45000):
+        sessao.pagina.wait_for_timeout(1500)
+        verificar_e_aguardar_cloudflare(sessao)
+        print(f"[{tribunal['nome']}] Caminho simples funcionou — sem precisar do portal.")
+        return _continuar_login_trf3_apos_abrir_tela(sessao, tribunal)
+
+    print(f"[{tribunal['nome']}] Caminho simples falhou — caindo pro portal+clique.")
     return _fazer_login_trf3_via_portal(sessao, tribunal)
 
 
@@ -1443,9 +1454,13 @@ def abrir_tela_de_consulta(sessao, tribunal):
             print(f"Tela de consulta em {url} não ficou pronta a tempo:", erro)
             return False
 
+    if tentar(tribunal["url_pesquisa"]):
+        return True
+
     if tribunal.get("login_portal_click"):
-        # TRF3: tenta por clique real primeiro (evita o
-        # ERR_HTTP2_PROTOCOL_ERROR do goto direto).
+        # TRF3: se o goto direto falhou, tenta por clique real num
+        # link da página logada (evita o ERR_HTTP2_PROTOCOL_ERROR).
+        print(f"[{tribunal['nome']}] goto direto falhou — tentando achar um link de consulta pra clicar...")
         if _tentar_clicar_para_consulta_trf3(sessao, tribunal):
             try:
                 verificar_e_aguardar_cloudflare(sessao)
@@ -1455,9 +1470,6 @@ def abrir_tela_de_consulta(sessao, tribunal):
                 return True
             except Exception as erro:
                 print(f"[{tribunal['nome']}] Tela de consulta (via clique) não ficou pronta a tempo:", erro)
-
-    if tentar(tribunal["url_pesquisa"]):
-        return True
 
     url_alternativa = tribunal.get("url_pesquisa_alternativa")
     if url_alternativa:
