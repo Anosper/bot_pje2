@@ -25,11 +25,14 @@ jobs:
           python -m playwright install chromium
         shell: powershell
 
-      - name: Criar arquivo de credenciais do Firebase
-        run: Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline -Encoding ascii
+      - name: Criar arquivos de credenciais do Firebase (principal + secundário)
+        run: |
+          Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account-2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_SECUNDARIO -NoNewline -Encoding ascii
         shell: powershell
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT_SECUNDARIO: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SECUNDARIO }}
 
       - name: Criar arquivo .env
         run: |
