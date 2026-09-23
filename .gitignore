@@ -1,6 +1,5 @@
-.env
-firebase-service-account*.json
-sessao_pje_ma.json
-debug_*/
-__pycache__/
-*.pyc
+playwright==1.47.0
+python-dotenv==1.0.1
+pyotp==2.9.0
+firebase-admin==6.5.0
+filelock>=3.13
