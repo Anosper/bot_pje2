@@ -124,12 +124,46 @@ CLASSES_JUDICIAIS = [
 ]
 
 # ============================================================
+# TRF3 — dados do fluxo especial de login (portal + clique)
+# ============================================================
+# O TRF3 tem WAF/proteção de rede que bloqueia navegação direta
+# (page.goto) para o domínio do PJe — só libera quando um clique de
+# verdade acontece dentro do navegador. Por isso o login passa pelo
+# portal público e clica no link, em vez de ir direto pra url_login.
+URL_PORTAL_TRF3 = "https://www.trf3.jus.br/pje/acesso-ao-sistema"
+URL_DESTINO_CLIQUE_TRF3 = "https://pje1g.trf3.jus.br"
+TEXTO_LINK_TRF3 = re.compile(r"Sistema\s+PJe\s*-\s*1[ºo]?\s*Grau", re.IGNORECASE)
+
+# URL de SSO de uso único — fallback se o clique no portal não
+# funcionar. Tem "state" fixo (uso único); pode falhar com "Cookie
+# not found" ou travar numa tela "já logado" se já tiver sido usada.
+URL_LOGIN_DIRETA_TRF3 = (
+    "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
+    "?response_type=code"
+    "&client_id=pje-trf3-1g"
+    "&redirect_uri=https%3A%2F%2Fpje1g.trf3.jus.br%2Fpje%2Flogin.seam"
+    "&state=8e583682-6a1e-4367-8d70-ef33e9eb59e9"
+    "&login=true"
+    "&scope=openid"
+)
+
+# Textos que indicam que o Keycloak caiu na tela "Você já está
+# logado." em vez de avançar sozinho pro PJe depois do 2FA.
+TEXTOS_JA_LOGADO = [
+    "você já está logado",
+    "voce ja esta logado",
+    "already logged in",
+    "you are already logged in",
+]
+
+# ============================================================
 # VALOR MÍNIMO DA CAUSA POR TRIBUNAL
 # ============================================================
 VALOR_MINIMO_CAUSA_POR_TRIBUNAL = {
     # O campo tem máscara monetária: os 2 últimos dígitos digitados
     # viram centavos. "1000000" -> exibido como R$ 10.000,00.
     "TJMA": "1000000",
+    "TRF3": "1000000",
 }
 
 # ============================================================
@@ -137,12 +171,27 @@ VALOR_MINIMO_CAUSA_POR_TRIBUNAL = {
 # ============================================================
 REGRA_SELECAO_PROCESSO = {
     ("TJMA", "Execução de Título Extrajudicial"): {"indice": 1},
+    ("TRF3", "Execução Fiscal"): {"classe_exigida": "Execução Fiscal"},
 }
 
 # ============================================================
 # TRIBUNAIS
 # ============================================================
 TRIBUNAIS = [
+    {
+        # TRF3 primeiro na lista de propósito — assim dá pra ver se
+        # ele está indo bem sem esperar o TJMA rodar primeiro.
+        "nome": "TRF3",
+        "url_login": "https://pje1g.trf3.jus.br/pje/login.seam",
+        "url_pesquisa": "https://pje1g.trf3.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
+        "senha_env": "PJE_SENHA_TRF3",
+        "login_portal_click": True,
+        "classes": [
+            "Execução Fiscal",
+            "Execução de Título Extrajudicial",
+            "Monitória",
+        ],
+    },
     {
         "nome": "TJMA",
         "url_login": "https://pje.tjma.jus.br/pje/login.seam",
@@ -409,11 +458,14 @@ def diagnosticar_tela_de_login(pagina, tribunal_nome):
 # FUNÇÃO — NAVEGAR COM RETRY (protege contra erros de rede
 # transitórios, ex: ERR_HTTP2_PROTOCOL_ERROR)
 # ============================================================
-def navegar_com_retry(pagina, url, tentativas=5, timeout=120000, wait_until="domcontentloaded"):
+def navegar_com_retry(pagina, url, tentativas=5, timeout=120000, wait_until="domcontentloaded", referer=None):
     ultimo_erro = None
     for tentativa in range(1, tentativas + 1):
         try:
-            pagina.goto(url, wait_until=wait_until, timeout=timeout)
+            if referer:
+                pagina.goto(url, wait_until=wait_until, timeout=timeout, referer=referer)
+            else:
+                pagina.goto(url, wait_until=wait_until, timeout=timeout)
             return True
         except Exception as erro:
             ultimo_erro = erro
@@ -425,43 +477,26 @@ def navegar_com_retry(pagina, url, tentativas=5, timeout=120000, wait_until="dom
 # ============================================================
 # FUNÇÃO — LOGIN AUTOMÁTICO
 # ============================================================
-def fazer_login(sessao, tribunal):
-    print()
-    print("==========================================")
-    print(f" LOGIN — {tribunal['nome']}")
-    print("==========================================")
-
-    if not navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=5, timeout=120000):
-        print(f"[{tribunal['nome']}] Não foi possível abrir a tela de login — pulando este tribunal.")
+def _preencher_usuario_senha_e_2fa(sessao, tribunal):
+    """Parte comum a todos os fluxos de login (depois de já estar na
+    tela do Keycloak/SSO): preenche usuário/senha e o TOTP se pedido.
+    Não oferece etapa de certificado digital — rodando como serviço,
+    sem sessão gráfica, não tem como clicar manualmente."""
+    senha = os.getenv(tribunal["senha_env"])
+    if not senha:
+        print(f"ERRO: variável {tribunal['senha_env']} não definida no .env")
         return False
-
+    try:
+        sessao.pagina.locator("#username").fill(USUARIO)
+        sessao.pagina.locator("#password").fill(senha)
+        sessao.pagina.locator("#kc-login").click()
+        print(f"[{tribunal['nome']}] Login e senha preenchidos e enviados.")
+    except Exception as erro:
+        print("Erro ao preencher usuário/senha:", erro)
+        print("URL atual:", sessao.pagina.url)
+        diagnosticar_tela_de_login(sessao.pagina, tribunal["nome"])
+        return False
     sessao.pagina.wait_for_timeout(2000)
-    verificar_e_aguardar_cloudflare(sessao)
-    if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
-        print("Sessão SSO já ativa — login automático (sem certificado nem senha).")
-        return True
-
-    # TJMA: login sempre por usuário/senha + 2FA — não oferecemos a
-    # etapa de certificado digital (que abriria uma janela visível
-    # pedindo clique manual, incompatível com rodar como serviço).
-    logou_com_certificado = False
-
-    if not logou_com_certificado:
-        senha = os.getenv(tribunal["senha_env"])
-        if not senha:
-            print(f"ERRO: variável {tribunal['senha_env']} não definida no .env")
-            return False
-        try:
-            sessao.pagina.locator("#username").fill(USUARIO)
-            sessao.pagina.locator("#password").fill(senha)
-            sessao.pagina.locator("#kc-login").click()
-            print(f"[{tribunal['nome']}] Login e senha preenchidos e enviados.")
-        except Exception as erro:
-            print("Erro ao preencher usuário/senha:", erro)
-            print("URL atual:", sessao.pagina.url)
-            diagnosticar_tela_de_login(sessao.pagina, tribunal["nome"])
-            return False
-        sessao.pagina.wait_for_timeout(2000)
 
     try:
         campo_totp = sessao.pagina.locator("#otp")
@@ -472,18 +507,256 @@ def fazer_login(sessao, tribunal):
             sessao.pagina.locator("#kc-login").click()
     except Exception as erro:
         print("Aviso: não encontrou/preencheu campo TOTP:", erro)
+    return True
+
+
+def fazer_login_simples(sessao, tribunal):
+    """Fluxo padrão: vai direto pra url_login. Usado por todos os
+    tribunais exceto o TRF3 (que precisa do fluxo especial abaixo)."""
+    if not navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=5, timeout=120000):
+        print(f"[{tribunal['nome']}] Não foi possível abrir a tela de login — pulando este tribunal.")
+        return False
+
+    sessao.pagina.wait_for_timeout(2000)
+    verificar_e_aguardar_cloudflare(sessao)
+    if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
+        print("Sessão SSO já ativa — login automático (sem certificado nem senha).")
+        return True
+
+    if not _preencher_usuario_senha_e_2fa(sessao, tribunal):
+        return False
 
     for _ in range(60):
         if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
-            metodo = "CERTIFICADO DIGITAL" if logou_com_certificado else "USUÁRIO E SENHA"
-            print(f"[{tribunal['nome']}] Login concluído com SUCESSO via {metodo}.")
+            print(f"[{tribunal['nome']}] Login concluído com SUCESSO via USUÁRIO E SENHA.")
             return True
         sessao.pagina.wait_for_timeout(1000)
 
-    metodo = "certificado digital" if logou_com_certificado else "usuário e senha"
-    print(f"[{tribunal['nome']}] ERRO: não saiu da tela de SSO após tentar login via {metodo}.")
+    print(f"[{tribunal['nome']}] ERRO: não saiu da tela de SSO após tentar login via usuário e senha.")
     print("URL atual:", sessao.pagina.url)
     return False
+
+
+def _promover_pagina_nova(sessao, pagina_nova):
+    try:
+        pagina_nova.wait_for_load_state("domcontentloaded", timeout=10000)
+    except Exception:
+        pass
+    pagina_nova.on("dialog", tratar_dialogo)
+    sessao.pagina = pagina_nova
+    for pagina_extra in list(sessao.contexto.pages):
+        if pagina_extra is not sessao.pagina:
+            try:
+                pagina_extra.close()
+            except Exception:
+                pass
+
+
+def _clicar_com_captura_de_aba(sessao, tribunal, elemento):
+    """Clica no elemento; se abrir aba nova, promove ela a
+    sessao.pagina e fecha as demais."""
+    try:
+        with sessao.contexto.expect_page(timeout=6000) as info_pagina_nova:
+            elemento.click()
+        _promover_pagina_nova(sessao, info_pagina_nova.value)
+        print(f"[{tribunal['nome']}] Clique abriu aba nova. URL atual:", sessao.pagina.url)
+    except Exception:
+        try:
+            sessao.pagina.wait_for_load_state("domcontentloaded", timeout=8000)
+        except Exception:
+            pass
+
+
+def _reforcar_com_href(sessao, tribunal, href):
+    """Se ainda estivermos presos no domínio de SSO depois de um
+    clique, tenta navegar direto pro href como reforço (a sessão já
+    deve estar autenticada nesse ponto, então costuma funcionar
+    mesmo quando o goto direto falhava antes do login)."""
+    if href and "sso.cloud.pje.jus.br" in sessao.pagina.url:
+        if href.startswith("/"):
+            href = URL_DESTINO_CLIQUE_TRF3 + href
+        print(f"[{tribunal['nome']}] Ainda no domínio de SSO — reforçando com navegação direta pro href: {href}")
+        navegar_com_retry(sessao.pagina, href, tentativas=1, timeout=20000, referer=sessao.pagina.url)
+        if "sso.cloud.pje.jus.br" in sessao.pagina.url:
+            try:
+                sessao.pagina.reload(wait_until="domcontentloaded", timeout=20000)
+            except Exception as erro:
+                print(f"[{tribunal['nome']}] Reload falhou: {erro}")
+
+
+def tentar_passar_tela_ja_logado(sessao, tribunal):
+    """Depois do 2FA, o Keycloak às vezes mostra 'Você já está
+    logado.' em vez de avançar sozinho pro PJe. Detecta essa tela e
+    tenta clicar automaticamente em qualquer link/botão visível pra
+    prosseguir (esse clique também pode abrir aba nova)."""
+    try:
+        texto_pagina = sessao.pagina.locator("body").inner_text(timeout=3000).lower()
+    except Exception:
+        return False
+
+    if not any(t in texto_pagina for t in TEXTOS_JA_LOGADO):
+        return False
+
+    print(f"[{tribunal['nome']}] Tela 'Você já está logado' detectada — tentando prosseguir automaticamente...")
+
+    try:
+        links = sessao.pagina.locator("a[href]")
+        total = links.count()
+        for i in range(total):
+            link = links.nth(i)
+            try:
+                if link.is_visible():
+                    href_link = link.get_attribute("href")
+                    _clicar_com_captura_de_aba(sessao, tribunal, link)
+                    _reforcar_com_href(sessao, tribunal, href_link)
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    try:
+        botoes = sessao.pagina.locator("button")
+        total = botoes.count()
+        for i in range(total):
+            botao = botoes.nth(i)
+            try:
+                if botao.is_visible():
+                    _clicar_com_captura_de_aba(sessao, tribunal, botao)
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    print(f"[{tribunal['nome']}] Não consegui clicar em nada na tela 'já logado'.")
+    return False
+
+
+def fazer_login_trf3_portal_click(sessao, tribunal):
+    """Fluxo especial do TRF3: o servidor bloqueia navegação direta
+    (page.goto) pro domínio do PJe — só libera com um clique de
+    verdade dentro do navegador. Por isso passamos pelo portal
+    público e clicamos no link, em vez de ir direto pra url_login."""
+
+    if not navegar_com_retry(sessao.pagina, URL_PORTAL_TRF3, tentativas=5, timeout=120000):
+        print(f"[{tribunal['nome']}] Não foi possível abrir o portal — pulando este tribunal.")
+        return False
+
+    sessao.pagina.wait_for_timeout(3000)
+    try:
+        sessao.pagina.wait_for_load_state("networkidle", timeout=20000)
+    except Exception:
+        pass
+    verificar_e_aguardar_cloudflare(sessao)
+
+    clicou_automatico = False
+    seletor_href = f"a[href='{URL_DESTINO_CLIQUE_TRF3}']"
+    try:
+        sessao.pagina.wait_for_selector(seletor_href, state="visible", timeout=15000)
+    except Exception:
+        pass
+
+    alvo_clique = sessao.pagina.locator(seletor_href)
+    if alvo_clique.count() == 0:
+        alvo_clique = sessao.pagina.get_by_text(TEXTO_LINK_TRF3)
+
+    if alvo_clique.count() > 0:
+        url_antes_do_clique = sessao.pagina.url
+        try:
+            alvo_clique.first.scroll_into_view_if_needed(timeout=5000)
+        except Exception:
+            pass
+        try:
+            with sessao.contexto.expect_page(timeout=15000) as info_pagina_nova:
+                alvo_clique.first.click()
+            pagina_nova = info_pagina_nova.value
+            try:
+                pagina_nova.wait_for_url(lambda url: url not in ("about:blank", ""), timeout=15000)
+            except Exception:
+                pass
+            if pagina_nova.url in ("about:blank", ""):
+                print(f"[{tribunal['nome']}] Aba nova abriu mas ficou em about:blank — não vou usar ela.")
+                try:
+                    pagina_nova.close()
+                except Exception:
+                    pass
+            else:
+                pagina_nova.on("dialog", tratar_dialogo)
+                sessao.pagina = pagina_nova
+                clicou_automatico = True
+                print(f"[{tribunal['nome']}] Clique no portal funcionou — abriu em aba nova. URL:", pagina_nova.url)
+        except Exception:
+            try:
+                sessao.pagina.wait_for_url(lambda url: url != url_antes_do_clique, timeout=15000)
+            except Exception:
+                pass
+            if sessao.pagina.url != url_antes_do_clique:
+                clicou_automatico = True
+
+    if not clicou_automatico:
+        print(f"[{tribunal['nome']}] Clique automático não funcionou — abrindo diretamente: {URL_LOGIN_DIRETA_TRF3}")
+        if navegar_com_retry(sessao.pagina, URL_LOGIN_DIRETA_TRF3, tentativas=3, timeout=60000):
+            clicou_automatico = True
+
+    if not clicou_automatico:
+        print(f"[{tribunal['nome']}] Não consegui abrir a tela de login de nenhuma forma — pulando este tribunal.")
+        diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_erro_abrir_login")
+        return False
+
+    for pagina_extra in list(sessao.contexto.pages):
+        if pagina_extra is not sessao.pagina:
+            try:
+                pagina_extra.close()
+            except Exception:
+                pass
+
+    try:
+        sessao.pagina.wait_for_load_state("domcontentloaded", timeout=30000)
+    except Exception:
+        pass
+    sessao.pagina.wait_for_timeout(1000)
+    sessao.pagina.bring_to_front()
+
+    sessao.pagina.wait_for_timeout(2000)
+    verificar_e_aguardar_cloudflare(sessao)
+
+    if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
+        print("Sessão SSO já ativa — login automático (sem certificado nem senha).")
+        return True
+
+    if not _preencher_usuario_senha_e_2fa(sessao, tribunal):
+        return False
+
+    for segundo in range(60):
+        if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
+            print(f"[{tribunal['nome']}] Login concluído com SUCESSO via USUÁRIO E SENHA.")
+            return True
+
+        if tentar_passar_tela_ja_logado(sessao, tribunal):
+            sessao.pagina.wait_for_timeout(2000)
+            if "sso.cloud.pje.jus.br" not in sessao.pagina.url:
+                print(f"[{tribunal['nome']}] Login concluído com SUCESSO (após passar pela tela 'já logado').")
+                return True
+            continue
+
+        sessao.pagina.wait_for_timeout(1000)
+
+    print(f"[{tribunal['nome']}] ERRO: não saiu da tela de SSO após tentar login via usuário e senha.")
+    print("URL atual:", sessao.pagina.url)
+    diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_erro_pos_2fa")
+    return False
+
+
+def fazer_login(sessao, tribunal):
+    print()
+    print("==========================================")
+    print(f" LOGIN — {tribunal['nome']}")
+    print("==========================================")
+
+    if tribunal.get("login_portal_click"):
+        return fazer_login_trf3_portal_click(sessao, tribunal)
+    return fazer_login_simples(sessao, tribunal)
 # ============================================================
 # FUNÇÃO — VERIFICAR PROCESSO NO FIREBASE
 # ============================================================
@@ -1123,7 +1396,7 @@ with sync_playwright() as p:
 
     print()
     print("==========================================")
-    print(" BOT PJE TJMA INICIADO")
+    print(" BOT PJE TJMA + TRF3 INICIADO")
     print("==========================================")
     print("Tribunais:", ", ".join(t["nome"] for t in TRIBUNAIS))
     print("Classes (padrão):", ", ".join(CLASSES_JUDICIAIS))
