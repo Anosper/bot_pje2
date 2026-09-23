@@ -53,14 +53,6 @@ class SessaoNavegador:
     def _abrir(self):
         self.navegador = self.p.chromium.launch(
             headless=self.headless,
-            # OBS: sem --disable-http2 de propósito. www.trf3.jus.br
-            # (portal) trava com essa flag ligada; pje1g.trf3.jus.br
-            # dá ERR_HTTP2_PROTOCOL_ERROR em goto() direto mesmo SEM
-            # a flag — mas parece que isso só acontece em goto()
-            # explícito, não em navegações por clique real (que é
-            # como login e abertura de consulta do TRF3 funcionam
-            # agora). Ver fazer_login_trf3_portal_click e
-            # abrir_tela_de_consulta.
         )
         if os.path.exists(self.arquivo_sessao):
             self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao)
@@ -128,28 +120,22 @@ CLASSES_JUDICIAIS = [
 ]
 
 # ============================================================
-# TRF3 — dados do fluxo especial de login (portal + clique)
+# LOGIN POR PORTAL+CLIQUE (tribunais com "login_portal_click": True)
 # ============================================================
-# O TRF3 tem WAF/proteção de rede que bloqueia navegação direta
-# (page.goto) para o domínio do PJe — só libera quando um clique de
-# verdade acontece dentro do navegador. Por isso o login passa pelo
-# portal público e clica no link, em vez de ir direto pra url_login.
-URL_PORTAL_TRF3 = "https://www.trf3.jus.br/pje/acesso-ao-sistema"
-URL_DESTINO_CLIQUE_TRF3 = "https://pje1g.trf3.jus.br"
-TEXTO_LINK_TRF3 = re.compile(r"Sistema\s+PJe\s*-\s*1[ºo]?\s*Grau", re.IGNORECASE)
-
-# URL de SSO de uso único — fallback se o clique no portal não
-# funcionar. Tem "state" fixo (uso único); pode falhar com "Cookie
-# not found" ou travar numa tela "já logado" se já tiver sido usada.
-URL_LOGIN_DIRETA_TRF3 = (
-    "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
-    "?response_type=code"
-    "&client_id=pje-trf3-1g"
-    "&redirect_uri=https%3A%2F%2Fpje1g.trf3.jus.br%2Fpje%2Flogin.seam"
-    "&state=35c4d516-2895-4996-a936-c4387c2c4fbb"
-    "&login=true"
-    "&scope=openid"
-)
+# Alguns tribunais têm WAF/proteção de rede que bloqueia navegação
+# direta (page.goto) para o domínio do PJe — só libera quando um
+# clique de verdade acontece dentro do navegador. Por isso o login
+# passa por um portal público e clica no link, em vez de ir direto
+# pra url_login. Cada tribunal que usa esse fluxo define no seu
+# dict em TRIBUNAIS:
+#   - url_portal: página pública com o link de acesso ao PJe
+#   - url_destino_clique: href exato do link a clicar
+#   - texto_link_portal: regex alternativa pra achar o link por texto
+#     (fallback se o seletor por href não achar)
+#   - url_login_direta_fallback: URL de SSO de uso único, como
+#     último recurso se o clique no portal falhar completamente
+#     (tem "state" fixo — só funciona uma vez, pode dar "Cookie not
+#     found" ou tela "já logado" se reusada)
 
 # Textos que indicam que o Keycloak caiu na tela "Você já está
 # logado." em vez de avançar sozinho pro PJe depois do 2FA.
@@ -181,20 +167,47 @@ REGRA_SELECAO_PROCESSO = {
 # ============================================================
 # TRIBUNAIS
 # ============================================================
+# TRF3 — pausado por instabilidade de rede/WAF (timeout e
+# ERR_HTTP2_PROTOCOL_ERROR intermitentes mesmo tentando vários
+# caminhos: goto direto, portal+clique, URL de SSO direta). Login
+# em si chegou a funcionar via SSO direta, mas não de forma
+# sustentável pra rodar sozinho. Reavaliar depois.
+# {
+#     "nome": "TRF3",
+#     "url_login": "https://pje1g.trf3.jus.br/pje/login.seam",
+#     "url_pesquisa": "https://pje1g.trf3.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
+#     "senha_env": "PJE_SENHA_TRF3",
+#     "login_portal_click": True,
+#     "url_portal": "https://www.trf3.jus.br/pje/acesso-ao-sistema",
+#     "url_destino_clique": "https://pje1g.trf3.jus.br",
+#     "texto_link_portal": re.compile(r"Sistema\s+PJe\s*-\s*1[ºo]?\s*Grau", re.IGNORECASE),
+#     "classes": [
+#         "Execução Fiscal",
+#         "Execução de Título Extrajudicial",
+#         "Monitória",
+#     ],
+# },
 TRIBUNAIS = [
     {
-        # TRF3 primeiro na lista de propósito — assim dá pra ver se
+        # TJPI primeiro na lista de propósito — assim dá pra ver se
         # ele está indo bem sem esperar o TJMA rodar primeiro.
-        "nome": "TRF3",
-        "url_login": "https://pje1g.trf3.jus.br/pje/login.seam",
-        "url_pesquisa": "https://pje1g.trf3.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
-        "senha_env": "PJE_SENHA_TRF3",
+        "nome": "TJPI",
+        "url_login": "https://pje.tjpi.jus.br/1g/login.seam",
+        "url_pesquisa": "https://pje.tjpi.jus.br/1g/Processo/ConsultaProcesso/listView.seam",
+        "senha_env": "PJE_SENHA_TJPI",
         "login_portal_click": True,
-        "classes": [
-            "Execução Fiscal",
-            "Execução de Título Extrajudicial",
-            "Monitória",
-        ],
+        "url_portal": "https://www.tjpi.jus.br/portaltjpi/pje/",
+        "url_destino_clique": "https://pje.tjpi.jus.br/1g",
+        "texto_link_portal": re.compile(r"Acessar\s+PJe\s*1[ºo]?\s*Grau", re.IGNORECASE),
+        "url_login_direta_fallback": (
+            "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
+            "?response_type=code"
+            "&client_id=pje-tjpi-1g"
+            "&redirect_uri=https%3A%2F%2Fpje.tjpi.jus.br%2F1g%2Flogin.seam"
+            "&state=6d2fa6a6-97fc-43b8-b775-3fafbb9c6841"
+            "&login=true"
+            "&scope=openid"
+        ),
     },
     {
         "nome": "TJMA",
@@ -516,7 +529,8 @@ def _preencher_usuario_senha_e_2fa(sessao, tribunal):
 
 def fazer_login_simples(sessao, tribunal):
     """Fluxo padrão: vai direto pra url_login. Usado por todos os
-    tribunais exceto o TRF3 (que precisa do fluxo especial abaixo)."""
+    tribunais exceto os que têm 'login_portal_click': True (que
+    precisam do fluxo especial abaixo)."""
     if not navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=5, timeout=120000):
         print(f"[{tribunal['nome']}] Não foi possível abrir a tela de login — pulando este tribunal.")
         return False
@@ -578,7 +592,7 @@ def _reforcar_com_href(sessao, tribunal, href):
     mesmo quando o goto direto falhava antes do login)."""
     if href and "sso.cloud.pje.jus.br" in sessao.pagina.url:
         if href.startswith("/"):
-            href = URL_DESTINO_CLIQUE_TRF3 + href
+            href = tribunal["url_destino_clique"] + href
         print(f"[{tribunal['nome']}] Ainda no domínio de SSO — reforçando com navegação direta pro href: {href}")
         navegar_com_retry(sessao.pagina, href, tentativas=1, timeout=20000, referer=sessao.pagina.url)
         if "sso.cloud.pje.jus.br" in sessao.pagina.url:
@@ -637,13 +651,13 @@ def tentar_passar_tela_ja_logado(sessao, tribunal):
     return False
 
 
-def fazer_login_trf3_portal_click(sessao, tribunal):
-    """TRF3: tenta primeiro o caminho simples (goto direto pra
-    url_login, igual aos outros tribunais) — o bloqueio de WAF que
-    exigia clique de verdade foi confirmado em outro ambiente/IP, e
-    pode não se aplicar rodando desse PC. Só cai pro portal+clique
-    (o único caminho sustentável pra rodar sozinho, sem depender de
-    link de uso único) se o simples falhar."""
+def fazer_login_portal_click(sessao, tribunal):
+    """Tribunais com 'login_portal_click': True: tenta primeiro o
+    caminho simples (goto direto pra url_login, igual aos outros
+    tribunais) — alguns WAFs que exigem clique de verdade podem não
+    se aplicar dependendo do ambiente/IP de onde o bot roda. Só cai
+    pro portal+clique (o caminho mais sustentável pra rodar sozinho,
+    sem depender de link de uso único) se o simples falhar."""
     print(f"[{tribunal['nome']}] Tentando caminho simples primeiro (goto direto pra url_login)...")
     if navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=2, timeout=45000):
         sessao.pagina.wait_for_timeout(1500)
@@ -652,16 +666,23 @@ def fazer_login_trf3_portal_click(sessao, tribunal):
         return _continuar_login_trf3_apos_abrir_tela(sessao, tribunal)
 
     print(f"[{tribunal['nome']}] Caminho simples falhou — caindo pro portal+clique.")
-    return _fazer_login_trf3_via_portal(sessao, tribunal)
+    return _fazer_login_via_portal(sessao, tribunal)
 
 
-def _fazer_login_trf3_via_portal(sessao, tribunal):
-    """Fluxo especial do TRF3: o servidor bloqueia navegação direta
+def _fazer_login_via_portal(sessao, tribunal):
+    """Fluxo de portal+clique: o servidor bloqueia navegação direta
     (page.goto) pro domínio do PJe — só libera com um clique de
     verdade dentro do navegador. Por isso passamos pelo portal
-    público e clicamos no link, em vez de ir direto pra url_login."""
+    público (tribunal['url_portal']) e clicamos no link
+    (tribunal['url_destino_clique']), em vez de ir direto pra
+    url_login."""
 
-    if not navegar_com_retry(sessao.pagina, URL_PORTAL_TRF3, tentativas=5, timeout=120000):
+    url_portal = tribunal["url_portal"]
+    url_destino_clique = tribunal["url_destino_clique"]
+    texto_link_portal = tribunal["texto_link_portal"]
+    url_login_direta_fallback = tribunal.get("url_login_direta_fallback")
+
+    if not navegar_com_retry(sessao.pagina, url_portal, tentativas=5, timeout=120000):
         print(f"[{tribunal['nome']}] Não foi possível abrir o portal — pulando este tribunal.")
         return False
 
@@ -673,7 +694,7 @@ def _fazer_login_trf3_via_portal(sessao, tribunal):
     verificar_e_aguardar_cloudflare(sessao)
 
     clicou_automatico = False
-    seletor_href = f"a[href='{URL_DESTINO_CLIQUE_TRF3}']"
+    seletor_href = f"a[href='{url_destino_clique}']"
     try:
         sessao.pagina.wait_for_selector(seletor_href, state="visible", timeout=15000)
     except Exception:
@@ -681,7 +702,7 @@ def _fazer_login_trf3_via_portal(sessao, tribunal):
 
     alvo_clique = sessao.pagina.locator(seletor_href)
     if alvo_clique.count() == 0:
-        alvo_clique = sessao.pagina.get_by_text(TEXTO_LINK_TRF3)
+        alvo_clique = sessao.pagina.get_by_text(texto_link_portal)
 
     if alvo_clique.count() > 0:
         url_antes_do_clique = sessao.pagina.url
@@ -730,9 +751,9 @@ def _fazer_login_trf3_via_portal(sessao, tribunal):
             except Exception:
                 pass
 
-    if not clicou_automatico:
-        print(f"[{tribunal['nome']}] Clique automático não funcionou — abrindo diretamente: {URL_LOGIN_DIRETA_TRF3}")
-        if navegar_com_retry(sessao.pagina, URL_LOGIN_DIRETA_TRF3, tentativas=3, timeout=60000):
+    if not clicou_automatico and url_login_direta_fallback:
+        print(f"[{tribunal['nome']}] Clique automático não funcionou — abrindo diretamente: {url_login_direta_fallback}")
+        if navegar_com_retry(sessao.pagina, url_login_direta_fallback, tentativas=3, timeout=60000):
             clicou_automatico = True
 
     if not clicou_automatico:
@@ -798,7 +819,7 @@ def fazer_login(sessao, tribunal):
     print("==========================================")
 
     if tribunal.get("login_portal_click"):
-        return fazer_login_trf3_portal_click(sessao, tribunal)
+        return fazer_login_portal_click(sessao, tribunal)
     return fazer_login_simples(sessao, tribunal)
 # ============================================================
 # FUNÇÃO — VERIFICAR PROCESSO NO FIREBASE
@@ -1491,7 +1512,7 @@ with sync_playwright() as p:
 
     print()
     print("==========================================")
-    print(" BOT PJE TJMA + TRF3 INICIADO")
+    print(" BOT PJE TJPI + TJMA INICIADO")
     print("==========================================")
     print("Tribunais:", ", ".join(t["nome"] for t in TRIBUNAIS))
     for _t in TRIBUNAIS:
