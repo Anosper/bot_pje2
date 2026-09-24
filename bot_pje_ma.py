@@ -1513,27 +1513,29 @@ def abrir_tela_de_consulta(sessao, tribunal):
             print(f"Tela de consulta em {url} não ficou pronta a tempo:", erro)
             return False
 
-    url_antes_de_tentar = sessao.pagina.url
-
     if tentar(tribunal["url_pesquisa"]):
         return True
 
     if tribunal.get("login_portal_click"):
         # Alguns tribunais (TRF3, TJRN, ...) bloqueiam goto() direto
         # pra tela de consulta (Access Denied / ERR_HTTP2_PROTOCOL_ERROR)
-        # — só aceitam clique real num link da página logada. Se o
-        # goto falhou, a aba pode ter ficado presa numa página de erro
-        # (perdendo o menu com o link); tenta voltar pra página de
-        # antes primeiro, pra ter o link disponível de novo.
-        if sessao.pagina.url != url_antes_de_tentar:
-            try:
-                sessao.pagina.go_back(wait_until="domcontentloaded", timeout=15000)
-                sessao.pagina.wait_for_timeout(1000)
-                print(f"[{tribunal['nome']}] Voltei pra página anterior pra tentar achar o link de consulta.")
-            except Exception as erro:
-                print(f"[{tribunal['nome']}] Não consegui voltar pra página anterior: {erro}")
+        # — só aceitam clique real num link da página logada. Registra
+        # o que sobrou na tela (pra ver se ficou presa num Access
+        # Denied ou só não achou o campo esperado).
+        print(f"[{tribunal['nome']}] goto direto falhou — registrando estado da página antes de tentar recuperar...")
+        diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_consulta_falhou")
 
-        print(f"[{tribunal['nome']}] goto direto falhou — tentando achar um link de consulta pra clicar...")
+        # go_back() pode reenviar a navegação anterior e esbarrar no
+        # mesmo bloqueio (ou pior, ficar presa em Access Denied) —
+        # mais seguro é reabrir a url_login, que já sabemos que
+        # funciona (sessão SSO continua ativa, cai direto logado),
+        # e a partir dela procurar o link de consulta pra clicar.
+        print(f"[{tribunal['nome']}] Reabrindo url_login pra voltar a uma página logada válida...")
+        navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=2, timeout=60000)
+        sessao.pagina.wait_for_timeout(1500)
+        verificar_e_aguardar_cloudflare(sessao)
+
+        print(f"[{tribunal['nome']}] tentando achar um link de consulta pra clicar...")
         if _tentar_clicar_para_consulta_trf3(sessao, tribunal):
             try:
                 verificar_e_aguardar_cloudflare(sessao)
