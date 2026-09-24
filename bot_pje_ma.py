@@ -51,13 +51,31 @@ class SessaoNavegador:
         self._abrir()
 
     def _abrir(self):
+        # --disable-blink-features=AutomationControlled + user agent
+        # "normal" + esconder navigator.webdriver: alguns portais
+        # (TJRN, e antes o TRF3) usam Akamai Bot Manager, que pode
+        # bloquear ("Access Denied") sessões que parecem Chromium
+        # automatizado. Isso reduz o fingerprint óbvio de automação,
+        # mas não é garantia contra bloqueio por padrão de tráfego.
         self.navegador = self.p.chromium.launch(
             headless=self.headless,
+            args=["--disable-blink-features=AutomationControlled"],
         )
+        contexto_kwargs = {
+            "user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "viewport": {"width": 1366, "height": 768},
+            "locale": "pt-BR",
+        }
         if os.path.exists(self.arquivo_sessao):
-            self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao)
+            self.contexto = self.navegador.new_context(storage_state=self.arquivo_sessao, **contexto_kwargs)
         else:
-            self.contexto = self.navegador.new_context()
+            self.contexto = self.navegador.new_context(**contexto_kwargs)
+        self.contexto.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+        )
         self.pagina = self.contexto.new_page()
         self.pagina.on("dialog", tratar_dialogo)
 
@@ -444,6 +462,26 @@ def tentar_login_certificado(sessao, tribunal):
     precisa_recarregar_pagina = not logou_com_certificado
 
     return logou_com_certificado, precisa_recarregar_pagina
+def pagina_bloqueada_por_waf(pagina):
+    """Detecta a página de 'Access Denied' do Akamai (edgesuite.net),
+    usada por alguns tribunais (TJRN, antes o TRF3) pra bloquear
+    tráfego que parece automação. Serve pra parar de insistir em
+    mais navegações quando a sessão/IP já foi bloqueada — continuar
+    batendo no site nesse estado só reforça o bloqueio."""
+    try:
+        if "access denied" in pagina.title().lower():
+            return True
+    except Exception:
+        pass
+    try:
+        texto = pagina.locator("body").inner_text(timeout=2000).lower()
+        if "access denied" in texto and "permission to access" in texto:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 # ============================================================
 # FUNÇÃO — DIAGNÓSTICO DA TELA DE LOGIN (quando #username falha)
 # ============================================================
@@ -1525,15 +1563,28 @@ def abrir_tela_de_consulta(sessao, tribunal):
         print(f"[{tribunal['nome']}] goto direto falhou — registrando estado da página antes de tentar recuperar...")
         diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_consulta_falhou")
 
+        if pagina_bloqueada_por_waf(sessao.pagina):
+            # A sessão/IP já foi bloqueada pelo WAF (Access Denied) —
+            # insistir com mais navegações agora só reforça o
+            # bloqueio. Desiste desse tribunal nessa varredura.
+            print(f"[{tribunal['nome']}] Página bloqueada pelo WAF (Access Denied) — desistindo desse tribunal nessa varredura, sem insistir com mais requisições.")
+            return False
+
         # go_back() pode reenviar a navegação anterior e esbarrar no
         # mesmo bloqueio (ou pior, ficar presa em Access Denied) —
         # mais seguro é reabrir a url_login, que já sabemos que
         # funciona (sessão SSO continua ativa, cai direto logado),
-        # e a partir dela procurar o link de consulta pra clicar.
+        # e a partir dela procurar o link de consulta pra clicar. Uma
+        # pequena espera antes ajuda a não parecer um burst de bot.
         print(f"[{tribunal['nome']}] Reabrindo url_login pra voltar a uma página logada válida...")
-        navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=2, timeout=60000)
+        sessao.pagina.wait_for_timeout(3000)
+        navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=1, timeout=60000)
         sessao.pagina.wait_for_timeout(1500)
         verificar_e_aguardar_cloudflare(sessao)
+
+        if pagina_bloqueada_por_waf(sessao.pagina):
+            print(f"[{tribunal['nome']}] Ainda bloqueado (Access Denied) depois de reabrir url_login — desistindo desse tribunal nessa varredura.")
+            return False
 
         print(f"[{tribunal['nome']}] tentando achar um link de consulta pra clicar...")
         if _tentar_clicar_para_consulta_trf3(sessao, tribunal):
