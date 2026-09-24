@@ -1538,8 +1538,8 @@ def abrir_tela_de_consulta(sessao, tribunal):
     # demais. O retry de rede já cobre falhas mais rápidas.
     TIMEOUT_BOTAO_PESQUISA = 60000
 
-    def tentar(url):
-        if not navegar_com_retry(sessao.pagina, url, tentativas=2, timeout=60000):
+    def tentar(url, referer=None):
+        if not navegar_com_retry(sessao.pagina, url, tentativas=2, timeout=60000, referer=referer):
             return False
         try:
             verificar_e_aguardar_cloudflare(sessao)
@@ -1551,7 +1551,13 @@ def abrir_tela_de_consulta(sessao, tribunal):
             print(f"Tela de consulta em {url} não ficou pronta a tempo:", erro)
             return False
 
-    if tentar(tribunal["url_pesquisa"]):
+    # Referer da própria url_login: alguns WAFs (Akamai) bloqueiam
+    # goto() "frio" sem Referer de dentro do site, mesmo com sessão
+    # válida — passar um Referer plausível pode evitar o bloqueio
+    # sem precisar cair pro fluxo de clique.
+    referer_pesquisa = tribunal["url_login"] if tribunal.get("login_portal_click") else None
+
+    if tentar(tribunal["url_pesquisa"], referer=referer_pesquisa):
         return True
 
     if tribunal.get("login_portal_click"):
@@ -1563,12 +1569,11 @@ def abrir_tela_de_consulta(sessao, tribunal):
         print(f"[{tribunal['nome']}] goto direto falhou — registrando estado da página antes de tentar recuperar...")
         diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_consulta_falhou")
 
-        if pagina_bloqueada_por_waf(sessao.pagina):
-            # A sessão/IP já foi bloqueada pelo WAF (Access Denied) —
-            # insistir com mais navegações agora só reforça o
-            # bloqueio. Desiste desse tribunal nessa varredura.
-            print(f"[{tribunal['nome']}] Página bloqueada pelo WAF (Access Denied) — desistindo desse tribunal nessa varredura, sem insistir com mais requisições.")
-            return False
+        # Só o goto() direto pra ConsultaProcesso costuma ser barrado
+        # (Access Denied) — o login em si (url_login) segue liberado.
+        # Por isso NÃO desiste aqui: só desiste se a própria url_login
+        # também vier bloqueada logo abaixo, o que indicaria a sessão
+        # inteira barrada em vez de só essa URL específica.
 
         # go_back() pode reenviar a navegação anterior e esbarrar no
         # mesmo bloqueio (ou pior, ficar presa em Access Denied) —
