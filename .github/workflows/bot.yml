@@ -63,3 +63,13 @@ jobs:
         # derrubar o runner — é esperado o step terminar por timeout,
         # não por erro. O cron dispara uma nova execução em seguida.
         # HEADLESS já é True no script, então não precisa de tela virtual.
+
+      - name: Publicar screenshots de diagnóstico (debug_login)
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: debug-login-${{ github.run_id }}
+          path: debug_login/
+          if-no-files-found: ignore
+          retention-days: 7
