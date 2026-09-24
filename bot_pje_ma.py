@@ -1538,9 +1538,7 @@ def abrir_tela_de_consulta(sessao, tribunal):
     # demais. O retry de rede já cobre falhas mais rápidas.
     TIMEOUT_BOTAO_PESQUISA = 60000
 
-    def tentar(url, referer=None):
-        if not navegar_com_retry(sessao.pagina, url, tentativas=2, timeout=60000, referer=referer):
-            return False
+    def campo_de_busca_visivel():
         try:
             verificar_e_aguardar_cloudflare(sessao)
             sessao.pagina.locator("#fPP\\:searchProcessos").wait_for(
@@ -1548,59 +1546,31 @@ def abrir_tela_de_consulta(sessao, tribunal):
             )
             return True
         except Exception as erro:
-            print(f"Tela de consulta em {url} não ficou pronta a tempo:", erro)
+            print("Tela de consulta não ficou pronta a tempo:", erro)
             return False
 
-    # Referer da própria url_login: alguns WAFs (Akamai) bloqueiam
-    # goto() "frio" sem Referer de dentro do site, mesmo com sessão
-    # válida — passar um Referer plausível pode evitar o bloqueio
-    # sem precisar cair pro fluxo de clique.
-    referer_pesquisa = tribunal["url_login"] if tribunal.get("login_portal_click") else None
-
-    if tentar(tribunal["url_pesquisa"], referer=referer_pesquisa):
-        return True
+    def tentar(url):
+        if not navegar_com_retry(sessao.pagina, url, tentativas=2, timeout=60000):
+            return False
+        return campo_de_busca_visivel()
 
     if tribunal.get("login_portal_click"):
-        # Alguns tribunais (TRF3, TJRN, ...) bloqueiam goto() direto
-        # pra tela de consulta (Access Denied / ERR_HTTP2_PROTOCOL_ERROR)
-        # — só aceitam clique real num link da página logada. Registra
-        # o que sobrou na tela (pra ver se ficou presa num Access
-        # Denied ou só não achou o campo esperado).
-        print(f"[{tribunal['nome']}] goto direto falhou — registrando estado da página antes de tentar recuperar...")
-        diagnosticar_tela_de_login(sessao.pagina, f"{tribunal['nome']}_consulta_falhou")
+        # Alguns tribunais (TRF3, e agora confirmado o TJRN) bloqueiam
+        # goto() "frio" direto pra tela de consulta com um Access
+        # Denied do WAF (Akamai) — e o bloqueio não fica só nessa URL:
+        # ele contamina a sessão/IP inteira por um tempo, derrubando
+        # até a url_login que segundos antes funcionava. Por isso,
+        # pra esses tribunais, NUNCA arriscamos esse goto primeiro —
+        # tentamos achar e clicar num link de menu na própria página
+        # logada (pós-login), que é navegação "de verdade" e não
+        # dispara o bloqueio.
+        print(f"[{tribunal['nome']}] Tentando achar um link de consulta pra clicar (evitando o goto direto que trava o WAF)...")
+        if _tentar_clicar_para_consulta_trf3(sessao, tribunal) and campo_de_busca_visivel():
+            return True
+        print(f"[{tribunal['nome']}] Não achei link pra clicar (ou não funcionou) — tentando goto direto como último recurso...")
 
-        # Só o goto() direto pra ConsultaProcesso costuma ser barrado
-        # (Access Denied) — o login em si (url_login) segue liberado.
-        # Por isso NÃO desiste aqui: só desiste se a própria url_login
-        # também vier bloqueada logo abaixo, o que indicaria a sessão
-        # inteira barrada em vez de só essa URL específica.
-
-        # go_back() pode reenviar a navegação anterior e esbarrar no
-        # mesmo bloqueio (ou pior, ficar presa em Access Denied) —
-        # mais seguro é reabrir a url_login, que já sabemos que
-        # funciona (sessão SSO continua ativa, cai direto logado),
-        # e a partir dela procurar o link de consulta pra clicar. Uma
-        # pequena espera antes ajuda a não parecer um burst de bot.
-        print(f"[{tribunal['nome']}] Reabrindo url_login pra voltar a uma página logada válida...")
-        sessao.pagina.wait_for_timeout(3000)
-        navegar_com_retry(sessao.pagina, tribunal["url_login"], tentativas=1, timeout=60000)
-        sessao.pagina.wait_for_timeout(1500)
-        verificar_e_aguardar_cloudflare(sessao)
-
-        if pagina_bloqueada_por_waf(sessao.pagina):
-            print(f"[{tribunal['nome']}] Ainda bloqueado (Access Denied) depois de reabrir url_login — desistindo desse tribunal nessa varredura.")
-            return False
-
-        print(f"[{tribunal['nome']}] tentando achar um link de consulta pra clicar...")
-        if _tentar_clicar_para_consulta_trf3(sessao, tribunal):
-            try:
-                verificar_e_aguardar_cloudflare(sessao)
-                sessao.pagina.locator("#fPP\\:searchProcessos").wait_for(
-                    state="visible", timeout=TIMEOUT_BOTAO_PESQUISA
-                )
-                return True
-            except Exception as erro:
-                print(f"[{tribunal['nome']}] Tela de consulta (via clique) não ficou pronta a tempo:", erro)
+    if tentar(tribunal["url_pesquisa"]):
+        return True
 
     url_alternativa = tribunal.get("url_pesquisa_alternativa")
     if url_alternativa:
