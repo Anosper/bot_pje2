@@ -7,17 +7,16 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ============================================================
-# CONEXÃO COM O PROJETO botorion2 (separado do projeto principal
-# que os bots já usam para salvar "processos")
+# CONEXÃO PARA STATUS/HEARTBEAT
 # ============================================================
-
-# Caminho do arquivo de credencial do projeto botorion2. No Render,
-# isso deve ser um "Secret File" (veja instruções de deploy) —
-# localmente, é um arquivo .json próprio (não confundir com a
-# credencial do projeto de "processos" do eproc — são dois
-# projetos Firebase diferentes).
+# Esse repositório não tem um secret separado pra um projeto
+# Firebase "botorion2" — reaproveita a MESMA credencial do projeto
+# principal já usada para salvar os "processos"
+# (firebase-service-account.json, criada pelo workflow a partir do
+# secret FIREBASE_SERVICE_ACCOUNT_JSON). As coleções bots_status e
+# bots_heartbeat ficam nesse mesmo projeto Firebase.
 CAMINHO_CREDENCIAL_BOTORION2 = os.getenv(
-    "BOTORION2_CREDENCIAL_PATH", "firebase-service-account2.json"
+    "BOTORION2_CREDENCIAL_PATH", "firebase-service-account.json"
 )
 
 _nome_app = "botorion2_status"
