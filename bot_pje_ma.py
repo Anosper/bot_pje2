@@ -18,7 +18,7 @@ from ultimo_visto import UltimoVisto
 # Orion — mesmo grupo "PJe" usado pelos outros bots PJe (TJCE, TJDFT,
 # TJPA, TJRO, TRF1, TRF3, TRF5), já que este processo cobre TJPI +
 # TJMA dentro do mesmo grupo/heartbeat.
-GRUPO_STATUS = "PJe"
+GRUPO_STATUS = "pje"
 
 uv = UltimoVisto()
 
