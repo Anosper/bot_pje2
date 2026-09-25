@@ -11,6 +11,16 @@ from firebase_admin import credentials
 from firebase_admin import firestore
 from google.api_core.exceptions import ResourceExhausted
 from firebase_manager import FirebaseManager
+from status_bots import iniciar_heartbeat, atualizar_status, esta_pausado_manualmente, horario_permitido
+from ultimo_visto import UltimoVisto
+
+# Nome do "grupo" desse processo na aba Credenciais/Status dos bots do
+# Orion — mesmo grupo "PJe" usado pelos outros bots PJe (TJCE, TJDFT,
+# TJPA, TJRO, TRF1, TRF3, TRF5), já que este processo cobre TJPI +
+# TJMA dentro do mesmo grupo/heartbeat.
+GRUPO_STATUS = "PJe"
+
+uv = UltimoVisto()
 
 # ============================================================
 # SUPORTE A "PULAR ESPERA" APERTANDO ENTER NO TERMINAL
@@ -205,32 +215,34 @@ REGRA_SELECAO_PROCESSO = {
 #         "Monitória",
 #     ],
 # },
+# TJRN — pausado pelo mesmo motivo do TRF3: o WAF (Akamai) bloqueia
+# ("Access Denied") o goto() direto pra ConsultaProcesso, o bloqueio
+# contamina a sessão/IP inteira (até a url_login volta bloqueada
+# depois), e a página pós-login não tem nenhum link de menu pra
+# clicar como alternativa (o clique-antes-do-goto não achou nada).
+# Login em si funciona normalmente (SSO ativo, sem precisar de
+# usuário/senha). Reavaliar depois.
+# {
+#     "nome": "TJRN",
+#     "url_login": "https://pje1g.tjrn.jus.br/pje/login.seam",
+#     "url_pesquisa": "https://pje1g.tjrn.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
+#     "senha_env": "PJE_SENHA_TJRN",
+#     "login_portal_click": True,
+#     "url_portal": "https://www.tjrn.jus.br/",
+#     "texto_clique_preliminar": re.compile(r"Consulta\s+Processual\s*-\s*PJe", re.IGNORECASE),
+#     "url_destino_clique": "https://pje1g.tjrn.jus.br/pje",
+#     "texto_link_portal": re.compile(r"Acessar\s+sistema", re.IGNORECASE),
+#     "url_login_direta_fallback": (
+#         "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
+#         "?response_type=code"
+#         "&client_id=pje-tjrn-1g"
+#         "&redirect_uri=https%3A%2F%2Fpje1g.tjrn.jus.br%2Fpje%2Flogin.seam"
+#         "&state=20a77679-4dd3-4cc6-8de0-9bc12c29ee59"
+#         "&login=true"
+#         "&scope=openid"
+#     ),
+# },
 TRIBUNAIS = [
-    {
-        # TJRN primeiro na lista de propósito — assim dá pra ver se
-        # ele está indo bem sem esperar os outros rodarem primeiro.
-        "nome": "TJRN",
-        "url_login": "https://pje1g.tjrn.jus.br/pje/login.seam",
-        "url_pesquisa": "https://pje1g.tjrn.jus.br/pje/Processo/ConsultaProcesso/listView.seam",
-        "senha_env": "PJE_SENHA_TJRN",
-        "login_portal_click": True,
-        "url_portal": "https://www.tjrn.jus.br/",
-        # Portal do TJRN esconde o link de acesso atrás de uma aba
-        # ("Consulta Processual - PJe") que precisa ser clicada
-        # primeiro pra revelar o link "Acessar sistema".
-        "texto_clique_preliminar": re.compile(r"Consulta\s+Processual\s*-\s*PJe", re.IGNORECASE),
-        "url_destino_clique": "https://pje1g.tjrn.jus.br/pje",
-        "texto_link_portal": re.compile(r"Acessar\s+sistema", re.IGNORECASE),
-        "url_login_direta_fallback": (
-            "https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/auth"
-            "?response_type=code"
-            "&client_id=pje-tjrn-1g"
-            "&redirect_uri=https%3A%2F%2Fpje1g.tjrn.jus.br%2Fpje%2Flogin.seam"
-            "&state=20a77679-4dd3-4cc6-8de0-9bc12c29ee59"
-            "&login=true"
-            "&scope=openid"
-        ),
-    },
     {
         "nome": "TJPI",
         "url_login": "https://pje.tjpi.jus.br/1g/login.seam",
@@ -1410,6 +1422,7 @@ def processar_pagina_de_processo(processo_pagina, tribunal_nome, classe, classe_
         print("Processo já estava cadastrado. Não será salvo novamente.")
     else:
         salvar_processo_no_firebase(dados, tribunal_nome)
+        uv.atualizar(tribunal_nome, numero)
     try:
         processo_pagina.close()
         print("Janela do processo fechada.")
@@ -1468,6 +1481,12 @@ def processar_combinacao(pagina, tribunal, classe):
         classe_exigida = None
 
     numero_processo = primeiro.inner_text().strip()
+
+    # Otimização: como a lista vem do mais recente pro mais antigo, se
+    # esse número já é o último que vimos nesse tribunal, nem precisa
+    # consultar o Firestore — nada novo nessa passada.
+    if not uv.eh_novo(tribunal["nome"], numero_processo):
+        return
 
     if processo_existe_no_firebase(numero_processo):
         return
@@ -1592,13 +1611,29 @@ with sync_playwright() as p:
 
     print()
     print("==========================================")
-    print(" BOT PJE TJRN + TJPI + TJMA INICIADO")
+    print(" BOT PJE TJPI + TJMA INICIADO")
     print("==========================================")
     print("Tribunais:", ", ".join(t["nome"] for t in TRIBUNAIS))
     for _t in TRIBUNAIS:
         print(f"  Classes ({_t['nome']}):", ", ".join(_t.get("classes", CLASSES_JUDICIAIS)))
 
+    iniciar_heartbeat(GRUPO_STATUS)
+
+    # Só para testes manuais via workflow_dispatch: se a variável de
+    # ambiente FORCAR_FORA_DA_JANELA vier "true", ignora a janela de
+    # horário (8h-18h, dias úteis) e roda mesmo assim.
+    FORCAR_FORA_DA_JANELA = os.getenv("FORCAR_FORA_DA_JANELA", "").strip().lower() == "true"
+    INTERVALO_FORA_DO_HORARIO = 300  # 5 minutos entre checagens fora da janela
+
     while True:
+        if not FORCAR_FORA_DA_JANELA and not horario_permitido():
+            print()
+            print("Fora da janela de horário (8h-18h, dias úteis) — aguardando...")
+            for tribunal in TRIBUNAIS:
+                atualizar_status(tribunal["nome"], GRUPO_STATUS, "fora_do_horario")
+            time.sleep(INTERVALO_FORA_DO_HORARIO)
+            continue
+
         print()
         print("##########################################")
         print(" NOVA VARREDURA COMPLETA")
@@ -1607,6 +1642,11 @@ with sync_playwright() as p:
         try:
             for tribunal in TRIBUNAIS:
                 nome_tribunal = tribunal["nome"]
+
+                if esta_pausado_manualmente(nome_tribunal):
+                    print(f"[{nome_tribunal}] Pausado manualmente pelo site — pulando.")
+                    atualizar_status(nome_tribunal, GRUPO_STATUS, "pausado")
+                    continue
 
                 try:
                     logado = fazer_login(sessao, tribunal)
@@ -1618,6 +1658,7 @@ with sync_playwright() as p:
 
                 if not logado:
                     print(f"Pulando {nome_tribunal} — falha no login.")
+                    atualizar_status(nome_tribunal, GRUPO_STATUS, "erro", detalhe_erro="Falha no login")
                     continue
 
                 try:
@@ -1627,6 +1668,10 @@ with sync_playwright() as p:
                     abriu_consulta = False
 
                 if not abriu_consulta:
+                    atualizar_status(
+                        nome_tribunal, GRUPO_STATUS, "erro",
+                        detalhe_erro="Não conseguiu abrir a tela de consulta"
+                    )
                     continue
 
                 classes_deste_tribunal = tribunal.get("classes", CLASSES_JUDICIAIS)
@@ -1638,6 +1683,8 @@ with sync_playwright() as p:
                         processar_combinacao(sessao.pagina, tribunal, classe)
                     except Exception as erro:
                         print(f"ERRO ao processar {nome_tribunal} / {classe}:", type(erro).__name__, erro)
+
+                atualizar_status(nome_tribunal, GRUPO_STATUS, "rodando")
 
             print()
             print("==========================================")
