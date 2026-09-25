@@ -3,7 +3,12 @@ name: Bot PJe TJMA
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      forcar_fora_da_janela:
+        description: "Rodar mesmo fora da janela 8h-18h (só para testes manuais)"
+        type: boolean
+        default: false
 
 concurrency:
   group: bot-pje-tjma
@@ -25,18 +30,21 @@ jobs:
           python -m playwright install chromium
         shell: powershell
 
-      - name: Criar arquivos de credenciais do Firebase (principal + failovers)
+      - name: Criar arquivos de credenciais do Firebase (principal + failovers + botorion2)
         run: |
           Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover3.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON -NoNewline -Encoding ascii
+          Set-Content -Path firebase-service-account2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON -NoNewline -Encoding ascii
         shell: powershell
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON }}
+          # ATENÇÃO: nome do secret ainda por confirmar — ver mensagem.
+          FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON }}
 
       - name: Criar arquivo .env
         run: |
@@ -58,6 +66,7 @@ jobs:
         shell: powershell
         env:
           PYTHONUNBUFFERED: "1"
+          FORCAR_FORA_DA_JANELA: ${{ github.event.inputs.forcar_fora_da_janela || 'false' }}
         # O bot roda em loop infinito (varredura a cada 30s). Ele fica
         # em primeiro plano aqui até o timeout-minutes do job (acima)
         # derrubar o runner — é esperado o step terminar por timeout,
