@@ -30,21 +30,21 @@ jobs:
           python -m playwright install chromium
         shell: powershell
 
-      - name: Criar arquivos de credenciais do Firebase (principal + failovers + botorion2)
+      - name: Criar arquivos de credenciais do Firebase (principal + failovers)
         run: |
           Set-Content -Path firebase-service-account.json -Value $env:FIREBASE_SERVICE_ACCOUNT_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON -NoNewline -Encoding ascii
           Set-Content -Path firebase-service-account-failover3.json -Value $env:FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON -NoNewline -Encoding ascii
-          Set-Content -Path firebase-service-account2.json -Value $env:FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON -NoNewline -Encoding ascii
         shell: powershell
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER2_JSON }}
           FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FAILOVER3_JSON }}
-          # ATENÇÃO: nome do secret ainda por confirmar — ver mensagem.
-          FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BOTORION2_JSON }}
+          # status_bots.py reaproveita esse mesmo firebase-service-account.json
+          # (projeto principal) pras coleções bots_status/bots_heartbeat —
+          # não precisa de um secret separado.
 
       - name: Criar arquivo .env
         run: |
