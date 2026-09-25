@@ -2,6 +2,7 @@
 firebase-service-account*.json
 firebase_quota_state.json*
 sessao_pje_ma.json
+ultimo_visto.json*
 debug_*/
 __pycache__/
 *.pyc
